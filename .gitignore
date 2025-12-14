@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary outputs (regenerated on demand)
+evaluation_report.txt
+cv_results.csv
+false_positive_report.csv
+diagnostics/
+diagnostics_summary.txt
+*.json.out
+demo_output.json
+output.json
+output_*.json
+*.pdf
+FINAL_EVALUATION_REPORT.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Logs
+*.log
+logs/
