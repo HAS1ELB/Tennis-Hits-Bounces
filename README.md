@@ -143,10 +143,12 @@ Input JSON files contain frame-indexed ball tracking data:
 - **Derivatives**: First and second derivatives computed for velocity and acceleration
 - **Rolling Statistics**: Temporal context captured via rolling mean/std (windows: 3, 5 frames)
 
-### Unsupervised Heuristics
+### Unsupervised Heuristics (Improved Phase 3)
 
-- Bounce threshold: Local Y maxima + vertical acceleration > 1.5 × std
-- Hit threshold: Horizontal acceleration > 2.0 × std OR velocity sign flip + speed increase
+- **Smoothing**: Savitzky-Golay filter applied to X/Y coordinates to reduce noise.
+- **Bounce Detection**: Local Y maxima + strict vertical velocity reversal (V-shape) + acceleration spike.
+- **Hit Detection**: High acceleration/jerk + trajectory reset (dot product check) + energy verification.
+- **Deduplication**: Clustering-based Non-Maximum Suppression (NMS) to merge consecutive detections.
 
 ### Supervised Model
 

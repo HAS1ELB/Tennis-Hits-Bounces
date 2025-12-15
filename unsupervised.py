@@ -4,60 +4,56 @@ from scipy.signal import find_peaks
 from utils import process_point_data
 
 def apply_heuristics(df, 
-                     ay_percentile=0.70,
-                     accel_percentile=0.70,
-                     y_bounce_percentile=0.90,
-                     min_speed_for_hit=5.0):
+                     ay_percentile=0.90,
+                     accel_percentile=0.90,
+                     min_speed_for_hit=2.0):
     """
-    Improved unsupervised detection with adaptive thresholds and better peak detection.
+    Improved unsupervised detection with physics-based heuristics.
+    Leverages smoothed coordinates for cleaner derivatives.
+    Phase 3 Logic (Optimal).
     """
     df = df.copy()
     df['pred_action'] = 'air'
     
     # --- Adaptive Thresholds ---
-    # Relaxed thresholds to improve recall
+    # Stricter thresholds (90th percentile) to improve precision
     ay_thresh = df['ay'].abs().quantile(ay_percentile)
     accel_thresh = df['accel'].quantile(accel_percentile)
-    
-    # Bounce height requirements (bounces happen on ground = high Y in screen coords)
-    y_ground_thresh = df['y'].quantile(y_bounce_percentile)
     
     # --- 1. BOUNCE DETECTION ---
     # Logic: Local Maxima in Y AND (Accel Spike OR Velocity Reversal)
     
-    # Find local maxima (peaks in Y)
-    # Invert Y for find_peaks because Y increases downwards in screen coords? 
-    # Actually, usually Y=0 is top. So ground is HIGH Y. 
-    # So we want peaks (maxima) in Y directly.
+    # Find local maxima (peaks in Y) - corresponding to ground contact
     y_values = df['y'].values
-    peaks, _ = find_peaks(y_values, prominence=10, distance=5)
+    # Increased distance to prevent finding peaks too close to each other
+    peaks, _ = find_peaks(y_values, prominence=5, distance=10)
     
     for p in peaks:
         idx = df.index[p]
         
-        # Condition A: Position (must be in lower part of screen)
-        if df.loc[idx, 'y'] < y_ground_thresh:
-            continue
-            
         # Check window for physics confirmation
-        start = max(0, p - 3)
-        end = min(len(df), p + 3)
+        loc_idx = df.index.get_loc(idx)
+        start = max(0, loc_idx - 3)
+        end = min(len(df), loc_idx + 4) # Look +3 frames ahead
         window = df.iloc[start:end]
         
-        # Condition B: Vertical Acceleration Spike
+        # Condition A: Vertical Acceleration Spike
         has_accel_spike = window['ay'].abs().max() > ay_thresh
         
-        # Condition C: Velocity Reversal (vy changes sign)
-        # Check if vy goes from positive (down) to negative (up)
-        # We look for sign change in window
-        has_reversal = (window['vy'].min() < 0) and (window['vy'].max() > 0)
+        # Condition B: Strict V-Shape (Velocity Reversal)
+        # We need a clear transition from +vy (down) to -vy (up)
+        # Sum of vy before should be positive, sum after should be negative
+        vy_in = window.iloc[:3]['vy'].mean() 
+        vy_out = window.iloc[-3:]['vy'].mean()
         
-        # Combine: Peak + (Accel OR Reversal)
-        if has_accel_spike or has_reversal:
+        is_v_shape = (vy_in > 0.5) and (vy_out < -0.5)
+        
+        # Combine: Peak + (Strict Reversal OR Strong Accel Spike)
+        if is_v_shape or (has_accel_spike and (vy_in > 0 and vy_out < 0)):
             df.loc[idx, 'pred_action'] = 'bounce'
 
     # --- 2. HIT DETECTION ---
-    # Logic: High Accel AND (Speed Increase OR Vx Reversal)
+    # Logic: High Accel AND (Speed Increase OR Trajectory Reset)
     
     # Candidates: High acceleration events (excluding already marked bounces)
     candidates = df[df['accel'] > accel_thresh].index
@@ -69,27 +65,87 @@ def apply_heuristics(df,
         # Check window
         loc_idx = df.index.get_loc(idx)
         start = max(0, loc_idx - 2)
-        end = min(len(df), loc_idx + 2)
+        end = min(len(df), loc_idx + 3)
         window = df.iloc[start:end]
         
-        # Condition A: Speed Increase (Racket adds energy)
-        # Compare max speed after event vs min speed before/at event
+        if len(window) < 4:
+            continue
+
+        # Feature 1: Speed Increase (Racket adds energy)
         speed_before = window['speed'].iloc[0]
         speed_after = window['speed'].iloc[-1]
-        has_energy_gain = speed_after > speed_before * 1.1  # 10% increase
+        has_energy_gain = speed_after > speed_before * 1.10  # 10% increase required now
         
-        # Condition B: Horizontal Direction Change (Return/Volley)
-        has_vx_reversal = (window['vx'].min() < 0) and (window['vx'].max() > 0)
+        # Feature 2: Trajectory Reset (Dot Product)
+        # If velocity vectors before and after oppose each other or change significantly
+        v_in = np.array([window['vx'].iloc[0], window['vy'].iloc[0]])
+        v_out = np.array([window['vx'].iloc[-1], window['vy'].iloc[-1]])
         
-        # Condition C: Minimum Activity (Ball must be moving)
+        # Normalize
+        norm_in = np.linalg.norm(v_in)
+        norm_out = np.linalg.norm(v_out)
+        
+        if norm_in > 0.1 and norm_out > 0.1:
+            dot_prod = np.dot(v_in, v_out) / (norm_in * norm_out)
+            # If dot product is low (< 0.5), angle is > 60 degrees. 
+            # If dot product is negative, direction reversed.
+            has_trajectory_change = dot_prod < 0.7 # Significant change
+        else:
+            has_trajectory_change = False
+        
+        # Condition D: Minimum Activity
         is_moving = df.loc[idx, 'speed'] > min_speed_for_hit
         
-        if is_moving and (has_energy_gain or has_vx_reversal):
+        if is_moving and (has_energy_gain or has_trajectory_change):
              df.loc[idx, 'pred_action'] = 'hit'
-             
     # --- Post-Processing ---
-    # Simple clean up of consecutive events - keep max confidence
-    # For unsupervised, we assume max accel is the 'true' event center
+    # Robust Non-Maximum Suppression (NMS)
+    # Group consecutive detections and keep only the strongest one
+    
+    # 1. Get all candidate indices
+    candidates = df[df['pred_action'] != 'air'].index.tolist()
+    if not candidates:
+        return df
+        
+    # 2. Cluster candidates (events within 10 frames of each other)
+    clusters = []
+    current_cluster = [candidates[0]]
+    
+    for i in range(1, len(candidates)):
+        if candidates[i] - candidates[i-1] <= 10:
+            current_cluster.append(candidates[i])
+        else:
+            clusters.append(current_cluster)
+            current_cluster = [candidates[i]]
+    clusters.append(current_cluster)
+    
+    # 3. Select best candidate per cluster
+    final_indices = []
+    final_actions = []
+    
+    for cluster in clusters:
+        # Determine dominanat action type in cluster (bounce vs hit)
+        # Priority: Bounce > Hit (Bounces are more distinct in Y)
+        actions = df.loc[cluster, 'pred_action']
+        if 'bounce' in actions.values:
+            best_action = 'bounce'
+            # For bounce, pick the frame with local max Y (highest visible point? NO. Lowest visual point = Max Y)
+            # Actually, we rely on the one with highest vertical acceleration spike or just center.
+            # Let's pick max 'accel' as impact is highest there.
+            cluster_subset = df.loc[cluster]
+            winner_idx = cluster_subset['accel'].idxmax()
+        else:
+            best_action = 'hit'
+            # For hit, pick max accel
+            cluster_subset = df.loc[cluster]
+            winner_idx = cluster_subset['accel'].idxmax()
+            
+        final_indices.append(winner_idx)
+        final_actions.append(best_action)
+        
+    # 4. Apply cleanup
+    df['pred_action'] = 'air' # Reset
+    df.loc[final_indices, 'pred_action'] = final_actions
     
     return df
 

@@ -25,6 +25,33 @@ def load_data_from_json(json_path):
     df.index.name = 'frame'
     return df
 
+def smooth_coordinates(df, window_length=7, polyorder=2):
+    """
+    Apply Savitzky-Golay filter to smooth x, y coordinates.
+    This significantly reduces noise in derivatives (velocity/acceleration).
+    """
+    from scipy.signal import savgol_filter
+    
+    # Needs minimum length
+    if len(df) <= window_length:
+        return df
+        
+    try:
+        df['x_smooth'] = savgol_filter(df['x'], window_length, polyorder)
+        df['y_smooth'] = savgol_filter(df['y'], window_length, polyorder)
+        
+        # Overwrite original or keep separate? 
+        # For heuristics, smoothing is better.
+        df['x_raw'] = df['x']
+        df['y_raw'] = df['y']
+        df['x'] = df['x_smooth']
+        df['y'] = df['y_smooth']
+    except Exception as e:
+        # Fallback if filter fails
+        pass
+        
+    return df
+
 def interpolate_missing(df):
     """
     Interpolate missing x, y coordinates to allow for smooth derivative calculation.
@@ -156,6 +183,7 @@ def process_point_data(json_path):
     """
     df = load_data_from_json(json_path)
     df = interpolate_missing(df)
+    df = smooth_coordinates(df) # Added smoothing
     df = calculate_derivatives(df)
     df = calculate_advanced_features(df)
     df = calculate_rolling_features(df)
@@ -178,6 +206,7 @@ def load_all_data(folder_path):
             
             # Process features per point
             df = interpolate_missing(df)
+            df = smooth_coordinates(df) # Added smoothing
             df = calculate_derivatives(df)
             df = calculate_advanced_features(df)
             df = calculate_rolling_features(df)
