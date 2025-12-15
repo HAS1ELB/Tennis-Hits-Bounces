@@ -11,9 +11,6 @@ Tennis Hits & Bounces/
 ├── unsupervised.py                  # Physics-based baseline
 ├── utils.py                         # Feature engineering utilities
 ├── evaluate.py                      # Quick evaluation script
-├── cross_validate.py                # K-fold cross-validation
-├── diagnostics.py                   # Visualization & debugging
-├── error_analysis.py                # False positive analysis
 ├── hit_bounce_model.pkl             # Trained XGBoost model (70 features)
 ├── requirements.txt                 # Python dependencies
 ├── README.md                        # This file
@@ -24,7 +21,7 @@ Tennis Hits & Bounces/
         └── ...
 ```
 
-**Note**: Temporary output files (diagnostics plots, CSV results) are gitignored and regenerated on demand.
+**Note**: output files (output.json) are gitignored.
 
 ## Installation
 
@@ -181,22 +178,6 @@ Input JSON files contain frame-indexed ball tracking data:
 - ✅ Production-ready pipeline with physics-based validation
 
 The unsupervised method provides a physics-based baseline for comparison and validation.
-
-### Performance Reports
-
-- See `FINAL_EVALUATION_REPORT.md` for comprehensive analysis
-- See `cv_results.csv` for detailed per-fold metrics
-- See `false_positive_report.csv` for error analysis
-
-## Diagnostics
-
-To analyze improved model performance and generate visualizations:
-
-```bash
-python diagnostics.py
-```
-
-This will create a `diagnostics/` folder with trajectory and physics plots for sample data.
 
 ## Author
 
